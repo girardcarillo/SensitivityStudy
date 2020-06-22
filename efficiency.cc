@@ -29,10 +29,15 @@ double _nbr_events_208Tl_ = 0;
 std::string const final_rate("final_rate.txt");
 std::ofstream final_flux(final_rate.c_str());
 
+struct search_ROI{
+  double Einf_ROI;
+  double Esup_ROI;
+  double T12_max;
+};
+
+
 
 TH1F *henergy_sum(string isotope, bool field, string process, double xmin, double xmax, int nbins);
-TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0);
-TH1F *hN_background(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0,TH1F *histo_efficiency = 0);
 double WindowMethodFindExpSigEvts(Double_t B);
 Double_t sensitivity_FC(string isotope, int bin_emin, int bin_emax, TH1F *histo_energy_0nubb, TH1F *histo_tot);
 TH2F *h2sensitivity(string isotope, bool field, double i_min, double i_max, double j_min, double j_max, double xmin, double xmax, int nbins,  TH1F *histo_energy_sum_0nubb = 0, TH1F *histo_energy_sum_2nubb_2MeV = 0, TH1F *histo_energy_sum_208Tl = 0, TH1F *histo_energy_sum_214Bi = 0,  TCanvas *c_sensitivity_spectrum = 0);
@@ -41,13 +46,56 @@ double ErrorStatbdf(string process, string isotope, double nbr_bdf, double effic
 search_ROI get_ROI(TH2F *histo_demie_vie = 0);
 double mbb_min(double T12_max, string isotope);
 double mbb_max(double T12_max, string isotope);
+// commenté le 22/06/20 car erreur de compil. Donc rajout de la déclaration de la fonction
+// hefficiency avant le main
+// TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0);
+TH1F *hN_background(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0,TH1F *histo_efficiency = 0);
 
 
-struct search_ROI{
-  double Einf_ROI;
-  double Esup_ROI;
-  double T12_max;
-};
+TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0){
+
+  TH1F *heff = new TH1F("efficiency","Efficiency histogram",nbins,xmin,xmax);
+
+  if (!histo_energy_sum) {
+    histo_energy_sum = henergy_sum(isotope,field, process,xmin,xmax,nbins);
+  }
+
+  int n_bins = histo_energy_sum->GetNbinsX();
+
+  for (int emin=0; emin<n_bins; emin++){
+    double efficiency = 0;
+    for (int bin_i=emin+1; bin_i<=n_bins; bin_i++){
+      efficiency += histo_energy_sum->GetBinContent(bin_i);
+    }
+    // if (efficiency < 2.3){
+    //   efficiency = 2.3;
+    // }
+    if (isotope == "82Se") {
+      efficiency *= 1./pow(10,7);
+    }
+    if (isotope == "150Nd") {
+      if (process == "0nubb") {
+        efficiency *= 1./9574121;
+      }
+      else if (process == "2nubb"|process == "2nubb_2MeV") {
+        efficiency *= 1./9656794;
+      }
+      else if (process == "208Tl") {
+        efficiency *= 1./9773130;
+      }
+      else if (process == "214Bi") {
+        efficiency *= 1./9778522;
+      }
+      else {
+        cout  << process << " Unknown process" << endl;
+      }
+    }
+    heff->SetBinContent(emin+1, efficiency);
+  }
+  return heff;
+}
+
+
 
 
 void efficiency(string isotope, bool field, string activities){
@@ -898,10 +946,10 @@ TH1F *henergy_sum(string isotope, bool field, string process, double xmin, doubl
 
   string file_path;
   if (field == 1) {
-    file_path = "$WORKDIR/Sensitivity/"+isotope+string("/with_B/")+process+string("/root_file_")+process+string("_");
+    file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/with_B/")+process+string("/root_file_")+process+string("_");
   }
   else {
-    file_path = "$WORKDIR/Sensitivity/"+isotope+string("/without_B/")+process+string("/root_file_")+process+string("_");
+    file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/without_B/")+process+string("/root_file_")+process+string("_");
   }
   string file_extension = ".root";
   string file_path_new;
@@ -1024,48 +1072,48 @@ TH1F *henergy_sum(string isotope, bool field, string process, double xmin, doubl
   return henergy_sum;
 }
 
-TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0){
+// TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0){
 
-  TH1F *hefficiency = new TH1F("efficiency","Efficiency histogram",nbins,xmin,xmax);
+//   TH1F *heff = new TH1F("efficiency","Efficiency histogram",nbins,xmin,xmax);
 
-  if (!histo_energy_sum) {
-    histo_energy_sum = henergy_sum(isotope,field, process,xmin,xmax,nbins);
-  }
+//   if (!histo_energy_sum) {
+//     histo_energy_sum = henergy_sum(isotope,field, process,xmin,xmax,nbins);
+//   }
 
-  int n_bins = histo_energy_sum->GetNbinsX();
+//   int n_bins = histo_energy_sum->GetNbinsX();
 
-  for (int emin=0; emin<n_bins; emin++){
-    double efficiency = 0;
-    for (int bin_i=emin+1; bin_i<=n_bins; bin_i++){
-      efficiency += histo_energy_sum->GetBinContent(bin_i);
-    }
-    // if (efficiency < 2.3){
-    //   efficiency = 2.3;
-    // }
-    if (isotope == "82Se") {
-      efficiency *= 1./pow(10,7);
-    }
-    if (isotope == "150Nd") {
-      if (process == "0nubb") {
-        efficiency *= 1./9574121;
-      }
-      else if (process == "2nubb"|process == "2nubb_2MeV") {
-        efficiency *= 1./9656794;
-      }
-      else if (process == "208Tl") {
-        efficiency *= 1./9773130;
-      }
-      else if (process == "214Bi") {
-        efficiency *= 1./9778522;
-      }
-      else {
-        cout  << process << " Unknown process" << endl;
-      }
-    }
-    hefficiency->SetBinContent(emin+1, efficiency);
-  }
-  return hefficiency;
-}
+//   for (int emin=0; emin<n_bins; emin++){
+//     double efficiency = 0;
+//     for (int bin_i=emin+1; bin_i<=n_bins; bin_i++){
+//       efficiency += histo_energy_sum->GetBinContent(bin_i);
+//     }
+//     // if (efficiency < 2.3){
+//     //   efficiency = 2.3;
+//     // }
+//     if (isotope == "82Se") {
+//       efficiency *= 1./pow(10,7);
+//     }
+//     if (isotope == "150Nd") {
+//       if (process == "0nubb") {
+//         efficiency *= 1./9574121;
+//       }
+//       else if (process == "2nubb"|process == "2nubb_2MeV") {
+//         efficiency *= 1./9656794;
+//       }
+//       else if (process == "208Tl") {
+//         efficiency *= 1./9773130;
+//       }
+//       else if (process == "214Bi") {
+//         efficiency *= 1./9778522;
+//       }
+//       else {
+//         cout  << process << " Unknown process" << endl;
+//       }
+//     }
+//     heff->SetBinContent(emin+1, efficiency);
+//   }
+//   return heff;
+// }
 
 
 TH1F *hN_background(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0,TH1F *histo_efficiency = 0){
@@ -1364,6 +1412,7 @@ double mbb_min(double T12_max, string isotope){
 }
 
 double mbb_max(double T12_max, string isotope){
+  double mbb= 0. ;
   double matrix_element;
   double phase_space;
   if (isotope == "82Se") {
