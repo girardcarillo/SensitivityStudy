@@ -9,25 +9,40 @@
 #include <stdlib.h>
 
 #include "/home/girardcarillo/Workdir/SNPlot/RootDisplay.h"
+#include "/home/girardcarillo/Workdir/Analyses/SensitivityStudy/contaminations/contaminations.h"
+#include "/home/girardcarillo/Workdir/Analyses/SensitivityStudy/EventSelection/Cuts.h"
 
 using namespace std;
 
 double Na = 6.022 * pow(10,23);
 double T_2nubb_82Se = 9.39 * pow(10,19);
+double T_0nubb_82Se = 2.5 * pow(10,23);
 double T_2nubb_150Nd = 9.11 * pow(10,18);
-double exposure = 17.5; // spec
-double A_208Tl = 2*31.5; // 31.5 = conv 1s en année
-//double A_208Tl = 54*31.5; // docdb 4505 pia
-double A_214Bi = 10*31.5; // spec
-//double A_214Bi = 290*31.5; // meme docdb
-double A_222Rn = 0.15e-3*31.5e6;
+double T_0nubb_150Nd = 2.5 * pow(10,23); // é chercher
+double exposure = 17.5; // 500
+
+double scale_Nd = 0.0317396 ; // 0.0986686
+double scale_Se = 0.0439913 ;
+
 double volume_tracker = 15.3 ; //m^3
+
 double mass_mol_82Se = 0.082; // kg/mol
 double mass_mol_150Nd = 0.150;
 
+// number of simulated events on the internal pads bulk only
+double nb_ev_0nu_internal = 9574121. ;
+double nb_ev_2nu_internal = 9655014 ; // 9656794
+double nb_ev_2nu_2MeV_internal = 9583845 ;
+double nb_ev_Tl_internal = 9771597 ; // 9773130.
+double nb_ev_Bi_internal = 9777626 ; // 9778522.
+double nb_ev_Rn = 9.7e7 ;
+
 //output file
 std::string const final_rate("final_rate.txt");
-std::ofstream final_flux(final_rate.c_str());
+std::ofstream final_flux;
+
+std::string const ev_counter("82Se/without_B/0nubb/ev_number_file0_0nu.txt");
+std::ofstream test_ev_nb(ev_counter.c_str());
 
 struct search_ROI{
   double Einf_ROI;
@@ -38,9 +53,9 @@ struct search_ROI{
 
 
 TH1F *henergy_sum(string isotope, bool field, string process, double xmin, double xmax, int nbins);
+TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0) ;
 double WindowMethodFindExpSigEvts(Double_t B);
 Double_t sensitivity_FC(string isotope, int bin_emin, int bin_emax, TH1F *histo_energy_0nubb, TH1F *histo_tot);
-TH2F *h2sensitivity(string isotope, bool field, double i_min, double i_max, double j_min, double j_max, double xmin, double xmax, int nbins,  TH1F *histo_energy_sum_0nubb = 0, TH1F *histo_energy_sum_2nubb_2MeV = 0, TH1F *histo_energy_sum_208Tl = 0, TH1F *histo_energy_sum_214Bi = 0,  TCanvas *c_sensitivity_spectrum = 0);
 double ErrorStatEfficiency(string process, string isotope, double efficiency);
 double ErrorStatbdf(string process, string isotope, double nbr_bdf, double efficiency);
 search_ROI get_ROI(TH2F *histo_demie_vie = 0);
@@ -52,956 +67,460 @@ double mbb_max(double T12_max, string isotope);
 TH1F *hN_background(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0,TH1F *histo_efficiency = 0);
 
 
-TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0){
-
-  TH1F *heff = new TH1F("efficiency","Efficiency histogram",nbins,xmin,xmax);
-
-  if (!histo_energy_sum) {
-    histo_energy_sum = henergy_sum(isotope,field, process,xmin,xmax,nbins);
-  }
-
-  int n_bins = histo_energy_sum->GetNbinsX();
-
-  for (int emin=0; emin<n_bins; emin++){
-
-    double efficiency = 0.;
-    for (int bin_i=emin+1; bin_i<=n_bins; bin_i++){
-      efficiency += histo_energy_sum->GetBinContent(bin_i);
-    }
-
-    // if (efficiency < 2.3){
-    //   efficiency = 2.3;
-    // }
-
-    ///eff = Nev sélectionnés / Nev simulés
-    if (isotope == "82Se") {
-      /// Se simulé sur internal source pad bulks
-      efficiency *= 1./pow(10,7);
-    }
-    if (isotope == "150Nd") {
-      /// Nd simulé sur source pad bulks, donc on doit retirer les év simulés sur les deux feuilles
-      /// externes, ce qui retire qlqs év
-      if (process == "0nubb") {
-        efficiency *= 1./9574121;
-      }
-      else if (process == "2nubb"|process == "2nubb_2MeV") {
-        efficiency *= 1./9656794;
-      }
-      else if (process == "208Tl") {
-        efficiency *= 1./9773130;
-      }
-      else if (process == "214Bi") {
-        efficiency *= 1./9778522;
-      }
-      else {
-        cout  << process << " Unknown process" << endl;
-      }
-    }
-    heff->SetBinContent(emin+1, efficiency);
-  }
-
-  return heff;
-
-}
 
 
-
-
-void efficiency(string isotope, bool field, string activities){
-
-
-  ///Drawing
-
-  TCanvas *c_energy_spectrum = new TCanvas("canvas1","canvas1");
-  c_energy_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
-  c_energy_spectrum->SetFillColor(0);
-  c_energy_spectrum->SetBorderMode(0);
-  c_energy_spectrum->SetBorderSize(2);
-  c_energy_spectrum->SetTopMargin(0.06024097);
-  c_energy_spectrum->SetBottomMargin(0.1395582);
-  c_energy_spectrum->SetFrameBorderMode(0);
-  c_energy_spectrum->SetFrameBorderMode(0);
-
-  TCanvas *c_efficiency_spectrum = new TCanvas("canvas2","canvas2");
-  c_efficiency_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
-  c_efficiency_spectrum->SetFillColor(0);
-  c_efficiency_spectrum->SetBorderMode(0);
-  c_efficiency_spectrum->SetBorderSize(2);
-  c_efficiency_spectrum->SetLogy();
-  c_efficiency_spectrum->SetTopMargin(0.06024097);
-  c_efficiency_spectrum->SetBottomMargin(0.1395582);
-  c_efficiency_spectrum->SetFrameBorderMode(0);
-  c_efficiency_spectrum->SetFrameBorderMode(0);
-
-  TCanvas *c_Nbackground_spectrum = new TCanvas("canvas3","canvas3");
-  c_Nbackground_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
-  c_Nbackground_spectrum->SetFillColor(0);
-  c_Nbackground_spectrum->SetBorderMode(0);
-  c_Nbackground_spectrum->SetBorderSize(2);
-  c_Nbackground_spectrum->SetLogy();
-  c_Nbackground_spectrum->SetTopMargin(0.06024097);
-  c_Nbackground_spectrum->SetBottomMargin(0.1395582);
-  c_Nbackground_spectrum->SetFrameBorderMode(0);
-  c_Nbackground_spectrum->SetFrameBorderMode(0);
-
-  TCanvas *c_sensitivity_spectrum = new TCanvas("canvas4","canvas4");
-  c_sensitivity_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
-  c_sensitivity_spectrum->SetFillColor(0);
-  c_sensitivity_spectrum->SetBorderMode(0);
-  c_sensitivity_spectrum->SetBorderSize(2);
-  c_sensitivity_spectrum->SetLogy();
-  c_sensitivity_spectrum->SetTopMargin(0.06024097);
-  c_sensitivity_spectrum->SetBottomMargin(0.1395582);
-  c_sensitivity_spectrum->SetFrameBorderMode(0);
-  c_sensitivity_spectrum->SetFrameBorderMode(0);
-
-  gStyle->SetOptStat(kFALSE);
-  // gStyle->SetPaintTextFormat("1.1e");
-
+void efficiency(string isotope, bool field, bool enable_drawing = 0){
 
   ///Total backgrounds
   TH1F *Nbackground_tot_spectrum = new TH1F("h_nbr_bdf_tot","Total expected number of background events",80,0,4);
+
 
   /// 0nubb
   TH1F *energy_spectrum_0nubb = henergy_sum(isotope, field,"0nubb",0,4,80);
   TH1F *efficiency_spectrum_0nubb = hefficiency(isotope, field,"0nubb",0,4,80,energy_spectrum_0nubb);
 
-  energy_spectrum_0nubb->Draw() ;
 
-  ///Backgrounds
-  if (field && isotope == "82Se") {
+  double scale_2nu = 0. ;
+  double nb_ev_0nu = 0 ;
+  double nb_ev_2nu = 0 ;
+  double nb_ev_Tl = 0 ;
+  double nb_ev_Bi = 0 ;
+  double T12_0nu = 0. ;
+  double T12_2nu = 0. ;
+  double mass_mol = 0. ;
+
+  double borne_inf_min_ROI = 0. ;
+  double borne_sup_min_ROI = 0. ;
+  double borne_sup_max_ROI = 0. ;
+
+  if (isotope == "82Se") {
+
+    scale_2nu = scale_Se ;
+    nb_ev_0nu = 1.e7 ;
+    nb_ev_2nu = 1.e7 ;
+    nb_ev_Tl = 1.e7 ;
+    nb_ev_Bi = 1.e7 ;
+    T12_0nu = T_0nubb_82Se ;
+    T12_2nu = T_2nubb_82Se ;
+    mass_mol = mass_mol_82Se ;
+    borne_inf_min_ROI = 2.45 ;
+    borne_sup_min_ROI = 2.95 ;
+    borne_sup_max_ROI = 3.45 ;
+
+  }
+
+  if (isotope == "150Nd") {
+
+    scale_2nu = scale_Nd ;
+    nb_ev_0nu = nb_ev_0nu_internal ;
+    nb_ev_2nu = nb_ev_2nu_2MeV_internal ;
+    nb_ev_Tl = nb_ev_Tl_internal ;
+    nb_ev_Bi = nb_ev_Bi_internal ;
+    T12_0nu = T_0nubb_150Nd ;
+    T12_2nu = T_2nubb_150Nd ;
+    mass_mol = mass_mol_150Nd ;
+    borne_inf_min_ROI = 2.85 ;
+    borne_sup_min_ROI = 3.35 ;
+    borne_sup_max_ROI = 3.85 ;
+
+  }
 
 
-    TH1F *energy_spectrum_2nubb = henergy_sum(isotope, field,"2nubb",0,4,80);
-    TH1F *efficiency_spectrum_2nubb = hefficiency(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb);
-    TH1F *Nbackground_spectrum_2nubb = hN_background(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb,efficiency_spectrum_2nubb);
 
-    TH1F *energy_spectrum_2nubb_2MeV = henergy_sum(isotope, field,"2nubb_2MeV",0,4,80);
-    TH1F *efficiency_spectrum_2nubb_2MeV = hefficiency(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV);
-    TH1F *Nbackground_spectrum_2nubb_2MeV = hN_background(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV,efficiency_spectrum_2nubb_2MeV);
+  TH1F *energy_spectrum_2nubb = henergy_sum(isotope, field,"2nubb_2MeV",0,4,80);
+  energy_spectrum_2nubb->Scale(scale_2nu) ;
 
-    TH1F *energy_spectrum_214Bi = henergy_sum(isotope, field,"214Bi",0,4,80);
-    TH1F *efficiency_spectrum_214Bi = hefficiency(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi);
-    TH1F *Nbackground_spectrum_214Bi = hN_background(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi,efficiency_spectrum_214Bi);
+  TH1F *efficiency_spectrum_2nubb = hefficiency(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb);
+  TH1F *Nbackground_spectrum_2nubb = hN_background(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb,efficiency_spectrum_2nubb);
 
-    TH1F *energy_spectrum_208Tl = henergy_sum(isotope, field,"208Tl",0,4,80);
-    TH1F *efficiency_spectrum_208Tl = hefficiency(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl);
-    TH1F *Nbackground_spectrum_208Tl = hN_background(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl,efficiency_spectrum_208Tl);
+  TH1F *energy_spectrum_214Bi = henergy_sum(isotope, field,"214Bi",0,4,80);
+  TH1F *efficiency_spectrum_214Bi = hefficiency(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi);
+  TH1F *Nbackground_spectrum_214Bi = hN_background(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi,efficiency_spectrum_214Bi);
 
-    TH1F *energy_spectrum_222Rn = henergy_sum(isotope, field,"222Rn",0,4,80);
-    TH1F *efficiency_spectrum_222Rn = hefficiency(isotope, field,"222Rn",0,4,80,energy_spectrum_222Rn);
-    TH1F *Nbackground_spectrum_222Rn = hN_background(isotope, field,"222Rn",0,4,80,energy_spectrum_222Rn,efficiency_spectrum_222Rn);
+  TH1F *energy_spectrum_208Tl = henergy_sum(isotope, field,"208Tl",0,4,80);
+  TH1F *efficiency_spectrum_208Tl = hefficiency(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl);
+  TH1F *Nbackground_spectrum_208Tl = hN_background(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl,efficiency_spectrum_208Tl);
 
-    energy_spectrum_2nubb->Add(energy_spectrum_2nubb_2MeV) ;
+  TH1F *energy_spectrum_222Rn = henergy_sum(isotope, field,"222Rn",0,4,80);
+  TH1F *efficiency_spectrum_222Rn = hefficiency(isotope, field,"222Rn",0,4,80,energy_spectrum_222Rn);
+  TH1F *Nbackground_spectrum_222Rn = hN_background(isotope, field,"222Rn",0,4,80,energy_spectrum_222Rn,efficiency_spectrum_222Rn);
+
+
+  TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,borne_inf_min_ROI,borne_sup_min_ROI,20,borne_inf_min_ROI,borne_sup_max_ROI);
+
+  Double_t Nbackground = 0;
+  Double_t Nbackground_2nubb = 0;
+  Double_t Nbackground_208Tl = 0;
+  Double_t Nbackground_222Rn = 0;
+  Double_t Nbackground_214Bi = 0;
+  Double_t sensitivity = 0;
+  Double_t efficiency_0nubb = 0;
+  Double_t efficiency_2nubb = 0;
+  Double_t efficiency_208Tl = 0;
+  Double_t efficiency_222Rn = 0;
+  Double_t efficiency_214Bi = 0;
+  Double_t expectedSignalEventLimit = 0;
+
+  for (int i=Nbackground_tot_spectrum->GetXaxis()->FindBin(borne_inf_min_ROI);i<=Nbackground_tot_spectrum->GetXaxis()->FindBin(borne_sup_min_ROI);i++) {
+    for (int j=i+1;j<=Nbackground_tot_spectrum->GetXaxis()->FindBin(borne_sup_max_ROI);j++) {
+
+      efficiency_0nubb += energy_spectrum_0nubb->Integral(i,j);
+      efficiency_0nubb *= 1./nb_ev_0nu;
+
+      efficiency_2nubb += energy_spectrum_2nubb->Integral(i,j);
+      efficiency_2nubb *= 1./nb_ev_2nu;
+      Nbackground_2nubb = ((Na*log(2))/mass_mol)*((efficiency_2nubb*exposure)/T12_2nu);
+
+      efficiency_214Bi += energy_spectrum_214Bi->Integral(i,j);
+      efficiency_214Bi *= 1./nb_ev_Bi;
+      Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
+
+      efficiency_208Tl+= energy_spectrum_208Tl->Integral(i,j);
+      efficiency_208Tl *= 1./nb_ev_Tl;
+      Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
+
+      efficiency_222Rn += energy_spectrum_222Rn->Integral(i,j);
+      efficiency_222Rn *= 1./nb_ev_Rn;
+      if (exposure == 17.5) {
+        Nbackground_222Rn = A_222Rn*efficiency_222Rn*volume_tracker*2.5;
+      }
+      if (exposure == 500) {
+        Nbackground_222Rn = A_222Rn*efficiency_222Rn*volume_tracker*100;
+      }
+
+      Nbackground = Nbackground_2nubb+Nbackground_208Tl+Nbackground_214Bi+Nbackground_222Rn;
+      if (Nbackground > 200.) {
+        expectedSignalEventLimit = TMath::Sqrt(Nbackground);
+      }
+      else {
+        expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
+      }
+
+      sensitivity = ((Na*log(2))/mass_mol)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
+
+      sensitivity_spectrum->SetBinContent(i+1-Nbackground_tot_spectrum->GetXaxis()->FindBin(borne_inf_min_ROI),j+2-Nbackground_tot_spectrum->GetXaxis()->FindBin(borne_inf_min_ROI+0.05),sensitivity);
+
+    }
+  }
+
+
+  cout << "T12 = " << get_ROI(sensitivity_spectrum).T12_max << endl;
+  cout << "mbb = " << "[" << mbb_min(get_ROI(sensitivity_spectrum).T12_max,isotope) << "," << mbb_max(get_ROI(sensitivity_spectrum).T12_max,isotope) << "]" << endl;
+
+  double efficiency_0nubb_ROI = energy_spectrum_0nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
+  cout << "0nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << efficiency_0nubb_ROI/nb_ev_0nu << endl;
+
+
+  double efficiency_2nubb_ROI = energy_spectrum_2nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
+  double Nbackground_2nubb_ROI = ((Na*log(2))/mass_mol)*((efficiency_2nubb_ROI*exposure)/T12_2nu);
+  cout << "2nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_2nubb_ROI/nb_ev_2nu << endl;
+
+
+  double efficiency_208Tl_ROI = energy_spectrum_208Tl->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
+  double Nbackground_208Tl_ROI = A_208Tl*efficiency_208Tl_ROI*exposure;
+  cout << "208Tl " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_208Tl_ROI/nb_ev_Tl << endl;
+
+
+  double efficiency_214Bi_ROI = energy_spectrum_214Bi->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
+  double Nbackground_214Bi_ROI = A_214Bi*efficiency_214Bi_ROI*exposure;
+  cout << "214Bi " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_214Bi_ROI/nb_ev_Bi << endl;
+
+
+  double efficiency_222Rn_ROI = energy_spectrum_222Rn->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
+  double Nbackground_222Rn_ROI = 0. ;
+  if (exposure == 17.5) {
+    Nbackground_222Rn_ROI = A_222Rn*efficiency_222Rn_ROI*volume_tracker*2.5;
+  }
+  if (exposure == 500) {
+    Nbackground_222Rn_ROI = A_222Rn*efficiency_222Rn_ROI*volume_tracker*100;
+  }
+
+  cout << "222Rn " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_222Rn_ROI/nb_ev_Rn << endl;
+
+  double NbkgTot = Nbackground_2nubb_ROI/nb_ev_2nu + Nbackground_208Tl_ROI/nb_ev_Tl + Nbackground_214Bi_ROI/nb_ev_Bi + Nbackground_222Rn_ROI/nb_ev_Rn ;
+  NbkgTot = NbkgTot/(get_ROI(sensitivity_spectrum).Esup_ROI-get_ROI(sensitivity_spectrum).Einf_ROI)*1e-3/exposure ;
+
+  cout << "Nbkg tot = " << NbkgTot << endl ;
+
+  final_flux.open ("InfluenceContaminations/results.txt", std::ofstream::out | std::ofstream::app) ;
+  final_flux << get_ROI(sensitivity_spectrum).Einf_ROI << " " << get_ROI(sensitivity_spectrum).Esup_ROI << " " << get_ROI(sensitivity_spectrum).T12_max << endl ;
+  final_flux.close() ;
+
+
+
+  // /// Drawing
+
+
+  if (enable_drawing) {
+
+
+    TCanvas *c_energy_spectrum = new TCanvas("canvas1","canvas1");
+    c_energy_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
+    c_energy_spectrum->SetFillColor(0);
+    c_energy_spectrum->SetBorderMode(0);
+    c_energy_spectrum->SetBorderSize(2);
+    c_energy_spectrum->SetTopMargin(0.06024097);
+    c_energy_spectrum->SetBottomMargin(0.1395582);
+    c_energy_spectrum->SetFrameBorderMode(0);
+    c_energy_spectrum->SetFrameBorderMode(0);
+
+    TCanvas *c_efficiency_spectrum = new TCanvas("canvas2","canvas2");
+    c_efficiency_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
+    c_efficiency_spectrum->SetFillColor(0);
+    c_efficiency_spectrum->SetBorderMode(0);
+    c_efficiency_spectrum->SetBorderSize(2);
+    c_efficiency_spectrum->SetLogy();
+    c_efficiency_spectrum->SetTopMargin(0.06024097);
+    c_efficiency_spectrum->SetBottomMargin(0.1395582);
+    c_efficiency_spectrum->SetFrameBorderMode(0);
+    c_efficiency_spectrum->SetFrameBorderMode(0);
+
+    TCanvas *c_Nbackground_spectrum = new TCanvas("canvas3","canvas3");
+    c_Nbackground_spectrum->Range(-0.4891892,-1.046424,4.513513,6.451694);
+    c_Nbackground_spectrum->SetFillColor(0);
+    c_Nbackground_spectrum->SetBorderMode(0);
+    c_Nbackground_spectrum->SetBorderSize(2);
+    c_Nbackground_spectrum->SetLogy();
+    c_Nbackground_spectrum->SetTopMargin(0.06024097);
+    c_Nbackground_spectrum->SetBottomMargin(0.1395582);
+    c_Nbackground_spectrum->SetFrameBorderMode(0);
+    c_Nbackground_spectrum->SetFrameBorderMode(0);
+
+    TCanvas *c_sensitivity_spectrum = new TCanvas("canvas4","canvas4");
+    gStyle->SetOptStat(0);
+    c_sensitivity_spectrum->Range(2.273232,2.252703,3.154545,3.525676);
+    c_sensitivity_spectrum->SetFillColor(0);
+    c_sensitivity_spectrum->SetBorderMode(0);
+    c_sensitivity_spectrum->SetBorderSize(2);
+    c_sensitivity_spectrum->SetLeftMargin(0.2005731);
+    c_sensitivity_spectrum->SetRightMargin(0.2320917);
+    c_sensitivity_spectrum->SetTopMargin(0.05944798);
+    c_sensitivity_spectrum->SetBottomMargin(0.1549894);
+    c_sensitivity_spectrum->SetFrameBorderMode(0);
+    c_sensitivity_spectrum->SetFrameBorderMode(0);
+
+
+    // /// energy spectra
+
+
+    energy_spectrum_0nubb->Scale((((Na*log(2))/mass_mol)*(exposure/T12_0nu))/nb_ev_0nu) ;
+    energy_spectrum_2nubb->Scale((((Na*log(2))/mass_mol)*(exposure/T12_2nu))/nb_ev_2nu) ;
+    energy_spectrum_208Tl->Scale(A_208Tl*exposure/nb_ev_Tl) ;
+    energy_spectrum_214Bi->Scale(A_214Bi*exposure/nb_ev_Bi) ;
+    if (exposure == 17.5) {
+      energy_spectrum_222Rn->Scale(A_222Rn*volume_tracker*2.5/nb_ev_Rn) ;
+    }
+    if (exposure == 500) {
+      energy_spectrum_222Rn->Scale(A_222Rn*volume_tracker*100/nb_ev_Rn) ;
+    }
+
+
+    // TH1F *energy_tot_bkg = new TH1F("h_nbr_bdf_tot","Total expected number of background events",80,0,4);
+
+    // energy_tot_bkg->Add(energy_spectrum_2nubb);
+    // energy_tot_bkg->Add(energy_spectrum_208Tl);
+    // energy_tot_bkg->Add(energy_spectrum_214Bi);
+    // energy_tot_bkg->Add(energy_spectrum_222Rn);
 
     c_energy_spectrum->cd();
     gPad->SetLogy();
 
-    config_histo1D(energy_spectrum_0nubb,"","Total energy","# Counts",2,1,MultiPlotColors(0)) ;
-    energy_spectrum_0nubb->SetTitle("");
+    THStack *hs = new THStack("hs","");
 
-    config_histo1D(energy_spectrum_2nubb,"EHISTSAME","Total energy","# Counts",2,1,MultiPlotColors(1)) ;
-    // config_histo1D(energy_spectrum_2nubb_2MeV,"HISTSAME","Total energy","# Counts",2,1,MultiPlotColors(2)) ;
-    config_histo1D(energy_spectrum_214Bi,"EHISTSAME","Total energy","# Counts",2,1,MultiPlotColors(2)) ;
-    config_histo1D(energy_spectrum_208Tl,"EHISTSAME","Total energy","# Counts",2,1,MultiPlotColors(3)) ;
-    config_histo1D(energy_spectrum_222Rn,"EHISTSAME","Total energy","# Counts",2,1,MultiPlotColors(4)) ;
+    hs->Add(energy_spectrum_208Tl,"EHIST") ;
+    energy_spectrum_208Tl->SetFillColorAlpha(kOrange+2,0.9) ;
+    energy_spectrum_208Tl->SetLineColor(kCyan+4) ;
+    hs->Add(energy_spectrum_214Bi,"EHIST") ;
+    energy_spectrum_214Bi->SetFillColorAlpha(kYellow-3,0.9) ;
+    energy_spectrum_214Bi->SetLineColor(kCyan+4) ;
+    hs->Add(energy_spectrum_222Rn,"EHIST") ;
+    energy_spectrum_222Rn->SetFillColorAlpha(kTeal+2,0.9) ;
+    energy_spectrum_222Rn->SetLineColor(kCyan+4) ;
+    hs->Add(energy_spectrum_2nubb,"EHIST") ;
+    energy_spectrum_2nubb->SetFillColorAlpha(kCyan+3,0.9) ;
+    energy_spectrum_2nubb->SetLineColor(kCyan+4) ;
 
-    energy_spectrum_0nubb->GetYaxis()->SetRangeUser(0.01,pow(10,6));
+    hs->SetMinimum(9e-4) ;
+    hs->SetMaximum(2e3) ;
 
+    config_hstack(hs,"","Total energy (MeV)","# Counts") ;
 
-    auto legend1 = new TLegend(0.75,0.53,0.89,0.93);
-    legend1->SetBorderSize(0) ;
-    legend1->AddEntry(energy_spectrum_0nubb,"0#nu#beta#beta","l");
-    legend1->AddEntry(energy_spectrum_2nubb,"2#nu#beta#beta","l");
-    // legend1->AddEntry(energy_spectrum_2nubb_2MeV,"2nubb_2MeV","l");
-    legend1->AddEntry(energy_spectrum_214Bi,"^{214}Bi","l");
-    legend1->AddEntry(energy_spectrum_208Tl,"^{208}Tl","l");
-    legend1->AddEntry(energy_spectrum_222Rn,"^{222}Rn","l");
-    legend1->Draw();
-    legend1->SetTextSize(0.05);
+    ///
 
-    TLine* line0 = new TLine(2.7,0,2.7,1e6) ;
-    TLine* line1 = new TLine(3.2,0,3.2,1e6) ;
+    // hs->SetMinimum(1e-3) ;
+    // hs->SetMaximum(1e2) ;
+
+    // hs->GetXaxis()->SetLimits(get_ROI(sensitivity_spectrum).Einf_ROI,get_ROI(sensitivity_spectrum).Esup_ROI) ;
+
+    TLine* line0 = new TLine(get_ROI(sensitivity_spectrum).Einf_ROI,0,get_ROI(sensitivity_spectrum).Einf_ROI,4e3) ;
+    TLine* line1 = new TLine(get_ROI(sensitivity_spectrum).Esup_ROI,0,get_ROI(sensitivity_spectrum).Esup_ROI,4e3) ;
     line0->SetLineStyle(2) ;
     line1->SetLineStyle(2) ;
-    line0->SetLineColor(kGray+3) ;
-    line1->SetLineColor(kGray+3) ;
+    line0->SetLineColor(kGray+1) ;
+    line1->SetLineColor(kGray+1) ;
     line0->SetLineWidth(2) ;
+
     line1->SetLineWidth(2) ;
     line0->Draw("SAME") ;
     line1->Draw("SAME") ;
 
+    ///
+
+    config_histo1D(energy_spectrum_0nubb,"ESAME","","",1,1,kGreen+4) ;
+    energy_spectrum_0nubb->SetMarkerStyle(8) ;
+    energy_spectrum_0nubb->SetMarkerSize(0.6) ;
+    energy_spectrum_0nubb->SetMarkerColor(kGreen+4) ;
+
+    auto legend1 = new TLegend(0.811,0.573,0.990,0.974);
+    legend1->SetBorderSize(1) ;
+    legend1->AddEntry(energy_spectrum_0nubb,"0#nu#beta#beta","lep");
+    legend1->AddEntry(energy_spectrum_2nubb,"2#nu#beta#beta","f");
+    legend1->AddEntry(energy_spectrum_222Rn,"^{222}Rn","f");
+    legend1->AddEntry(energy_spectrum_214Bi,"^{214}Bi","f");
+    legend1->AddEntry(energy_spectrum_208Tl,"^{208}Tl","f");
+    legend1->Draw() ;
+
+
+    // /// efficiency spectra
 
     c_efficiency_spectrum->cd();
     gPad->SetLogy();
 
-    config_histo1D(efficiency_spectrum_0nubb,"","E>E_{min}","Efficiency",2,1,MultiPlotColors(0)) ;
+    config_histo1D(efficiency_spectrum_0nubb,"L","E>E_{min} (MeV)","Cumulative efficiency",2,1,kGreen+4) ;
+    efficiency_spectrum_0nubb->SetLineStyle(7) ;
     efficiency_spectrum_0nubb->SetTitle("");
+    efficiency_spectrum_0nubb->GetYaxis()->SetRangeUser(1e-8,1) ;
 
-    config_histo1D(efficiency_spectrum_2nubb,"SAME","E>E_{min}","Efficiency",2,1,MultiPlotColors(1)) ;
-    config_histo1D(efficiency_spectrum_2nubb_2MeV,"SAME","E>E_{min}","Efficiency",2,1,MultiPlotColors(2)) ;
-    config_histo1D(efficiency_spectrum_214Bi,"SAME","E>E_{min}","Efficiency",2,1,MultiPlotColors(3)) ;
-    config_histo1D(efficiency_spectrum_208Tl,"SAME","E>E_{min}","Efficiency",2,1,MultiPlotColors(4)) ;
-    config_histo1D(efficiency_spectrum_222Rn,"SAME","E>E_{min}","Efficiency",2,1,MultiPlotColors(5)) ;
+    config_histo1D(efficiency_spectrum_2nubb,"SAMEL","","",2,1,kCyan+3) ;
+    config_histo1D(efficiency_spectrum_214Bi,"SAMEL","","",2,1,kYellow-3) ;
+    config_histo1D(efficiency_spectrum_208Tl,"SAMEL","","",2,1,kOrange+2) ;
+    config_histo1D(efficiency_spectrum_222Rn,"SAMEL","","",2,1,kTeal+2) ;
 
-    efficiency_spectrum_0nubb->GetYaxis()->SetRangeUser(pow(10,-7),1);
 
-    auto legend2 = new TLegend(0.75,0.53,0.89,0.93);
+    TLine* l0 = new TLine(get_ROI(sensitivity_spectrum).Einf_ROI,0,get_ROI(sensitivity_spectrum).Einf_ROI,1) ;
+    TLine* l1 = new TLine(get_ROI(sensitivity_spectrum).Esup_ROI,0,get_ROI(sensitivity_spectrum).Esup_ROI,1) ;
+    l0->SetLineStyle(2) ;
+    l1->SetLineStyle(2) ;
+    l0->SetLineColor(kGray+1) ;
+    l1->SetLineColor(kGray+1) ;
+    l0->SetLineWidth(2) ;
+
+    l1->SetLineWidth(2) ;
+    l0->Draw("SAME") ;
+    l1->Draw("SAME") ;
+
+    auto legend2 = new TLegend(0.811,0.573,0.990,0.974);
     legend2->AddEntry(efficiency_spectrum_0nubb,"0#nu#beta#beta","l");
     legend2->AddEntry(efficiency_spectrum_2nubb,"2#nu#beta#beta","l");
-    legend2->AddEntry(efficiency_spectrum_2nubb_2MeV,"2#nu#beta#beta_2MeV","l");
-    legend2->AddEntry(efficiency_spectrum_214Bi,"^{214} Bi","l");
-    legend2->AddEntry(efficiency_spectrum_208Tl,"^{208} Tl","l");
-    legend2->AddEntry(efficiency_spectrum_222Rn,"^{222} Rn","l");
+    legend2->AddEntry(efficiency_spectrum_222Rn,"^{222}Rn","l");
+    legend2->AddEntry(efficiency_spectrum_214Bi,"^{214}Bi","l");
+    legend2->AddEntry(efficiency_spectrum_208Tl,"^{208}Tl","l");
     legend2->Draw();
+
+
+
+    // /// Nbackground spectra
 
     c_Nbackground_spectrum->cd();
     gPad->SetLogy();
 
-    config_histo1D(Nbackground_spectrum_2nubb,"","E>E_{min}","B",2,1,MultiPlotColors(0)) ;
+    config_histo1D(Nbackground_spectrum_2nubb,"L","E>E_{min} (MeV)","#Background events",2,1,kCyan+3) ;
     Nbackground_spectrum_2nubb->SetTitle("");
 
-    config_histo1D(Nbackground_spectrum_2nubb_2MeV,"SAME","E>E_{min}","B",2,1,MultiPlotColors(1)) ;
-    config_histo1D(Nbackground_spectrum_214Bi,"SAME","E>E_{min}","B",2,1,MultiPlotColors(2)) ;
-    config_histo1D(Nbackground_spectrum_208Tl,"SAME","E>E_{min}","B",2,1,MultiPlotColors(3)) ;
-    config_histo1D(Nbackground_spectrum_222Rn,"SAME","E>E_{min}","B",2,1,MultiPlotColors(4)) ;
+    config_histo1D(Nbackground_spectrum_214Bi,"SAMEL","","",2,1,kYellow-3) ;
+    config_histo1D(Nbackground_spectrum_208Tl,"SAMEL","","",2,1,kOrange+2) ;
+    config_histo1D(Nbackground_spectrum_222Rn,"SAMEL","","",2,1,kTeal+2) ;
 
-    Nbackground_spectrum_2nubb->GetYaxis()->SetRangeUser(pow(10,-5),pow(10,6));
+    Nbackground_spectrum_2nubb->GetYaxis()->SetRangeUser(1e-3,1e4);
 
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_2nubb,Nbackground_spectrum_2nubb_2MeV,1,0.0439913);
+    Nbackground_tot_spectrum->Add(Nbackground_spectrum_2nubb);
     Nbackground_tot_spectrum->Add(Nbackground_spectrum_208Tl);
     Nbackground_tot_spectrum->Add(Nbackground_spectrum_214Bi);
     Nbackground_tot_spectrum->Add(Nbackground_spectrum_222Rn);
-    config_histo1D(Nbackground_tot_spectrum,"SAME","E>E_{min}","B",2,1,MultiPlotColors(5)) ;
+    config_histo1D(Nbackground_tot_spectrum,"SAMEL","","",2,1,kBlack) ;
 
+    TLine* l2 = new TLine(get_ROI(sensitivity_spectrum).Einf_ROI,0,get_ROI(sensitivity_spectrum).Einf_ROI,1e4) ;
+    TLine* l3 = new TLine(get_ROI(sensitivity_spectrum).Esup_ROI,0,get_ROI(sensitivity_spectrum).Esup_ROI,1e4) ;
+    l2->SetLineStyle(2) ;
+    l3->SetLineStyle(2) ;
+    l2->SetLineColor(kGray+1) ;
+    l3->SetLineColor(kGray+1) ;
+    l2->SetLineWidth(2) ;
 
-    auto legend3= new TLegend(0.75,0.6,0.89,0.89);
+    l3->SetLineWidth(2) ;
+    l2->Draw("SAME") ;
+    l3->Draw("SAME") ;
+
+    auto legend3= new TLegend(0.811,0.573,0.990,0.974);
 
     legend3->AddEntry(Nbackground_spectrum_2nubb,"2#nu#beta#beta","l");
-    legend3->AddEntry(Nbackground_spectrum_2nubb_2MeV,"2#nu#beta#beta_2MeV","l");
-    legend3->AddEntry(Nbackground_spectrum_214Bi,"214Bi","l");
-    legend3->AddEntry(Nbackground_spectrum_208Tl,"208Tl","l");
-    legend3->AddEntry(Nbackground_spectrum_222Rn,"222Rn","l");
-    legend3->AddEntry(Nbackground_tot_spectrum,"TOTAL","l");
-    legend3->Draw();
-
-
-    TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,2.45,2.95,20,2.45,3.45);
-
-    Double_t Nbackground = 0;
-    Double_t Nbackground_2nubb = 0;
-    Double_t Nbackground_2nubb_2MeV = 0;
-    Double_t Nbackground_208Tl = 0;
-    Double_t Nbackground_222Rn = 0;
-    Double_t Nbackground_214Bi = 0;
-    Double_t sensitivity = 0;
-    Double_t efficiency_0nubb = 0;
-    Double_t efficiency_2nubb = 0;
-    Double_t efficiency_2nubb_2MeV = 0;
-    Double_t efficiency_208Tl = 0;
-    Double_t efficiency_222Rn = 0;
-    Double_t efficiency_214Bi = 0;
-    Double_t expectedSignalEventLimit = 0;
-
-    for (int i=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.45);i<=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.95);i++) {
-      for (int j=i+1;j<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.45);j++) {
-
-        efficiency_0nubb += energy_spectrum_0nubb->Integral(i,j);
-        efficiency_0nubb *= 1./pow(10,7);
-
-        efficiency_2nubb_2MeV += energy_spectrum_2nubb_2MeV->Integral(i,j);
-        efficiency_2nubb_2MeV *= 1./pow(10,7);
-        Nbackground_2nubb_2MeV = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV*exposure)/T_2nubb_82Se);
-
-        efficiency_214Bi += energy_spectrum_214Bi->Integral(i,j);
-        efficiency_214Bi *= 1./pow(10,7);
-        Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
-
-        efficiency_208Tl += energy_spectrum_208Tl->Integral(i,j);
-        efficiency_208Tl *= 1./pow(10,7);
-        Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
-
-        efficiency_222Rn += energy_spectrum_222Rn->Integral(i,j);
-        efficiency_222Rn *= 1./pow(10,7);
-
-        if (exposure == 17.5) {
-          Nbackground_222Rn = A_222Rn*efficiency_222Rn*volume_tracker*2.5;
-        }
-        if (exposure == 500) {
-          Nbackground_222Rn = A_222Rn*efficiency_222Rn*volume_tracker*100;
-        }
-
-        // Nbackground_222Rn=Nbackground_214Bi*4.39; // sans simus Rn, avec estimation par rapport
-        // au Bi dans thèse Steven
-
-        Nbackground = Nbackground_2nubb_2MeV+Nbackground_208Tl+Nbackground_214Bi+Nbackground_222Rn;
-        if (Nbackground > 200.) {
-          expectedSignalEventLimit = TMath::Sqrt(Nbackground);
-        }
-        else {
-          expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
-        }
-
-        sensitivity = ((Na*log(2))/mass_mol_82Se)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-
-        sensitivity_spectrum->SetBinContent(i+1-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.45),j+2-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.5),sensitivity);
-
-      }
-    }
-
-    cout << "T12 = " << get_ROI(sensitivity_spectrum).T12_max << endl;
-    cout << "mbb = " << "[" << mbb_min(get_ROI(sensitivity_spectrum).T12_max,isotope) << "," << mbb_max(get_ROI(sensitivity_spectrum).T12_max,isotope) << "]" << endl;
-
-    double efficiency_0nubb_ROI = energy_spectrum_0nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    cout << "0nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << efficiency_0nubb_ROI/pow(10,7) << endl;
-
-
-    double efficiency_2nubb_2MeV_ROI = energy_spectrum_2nubb_2MeV->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_2nubb_2MeV_ROI = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV_ROI*exposure)/T_2nubb_82Se);
-    cout << "2nubb_2MeV " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_2nubb_2MeV_ROI/pow(10,7) << endl;
-
-
-    double efficiency_208Tl_ROI = energy_spectrum_208Tl->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_208Tl_ROI = A_208Tl*efficiency_208Tl_ROI*exposure;
-    cout << "208Tl " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_208Tl_ROI/pow(10,7) << endl;
-
-
-    double efficiency_214Bi_ROI = energy_spectrum_214Bi->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_214Bi_ROI = A_214Bi*efficiency_214Bi_ROI*exposure;
-    cout << "214Bi " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_214Bi_ROI/pow(10,7) << endl;
-
-
-
-    c_sensitivity_spectrum->cd();
-    // TGaxis::SetMaxDigits(2);
-    configF_histo2D(sensitivity_spectrum,"", "Inf ROI","sup ROI","COLZTEXT") ;
-
-    // TH2F *histo2_sensitivity = h2sensitivity(isotope, field, 2.45, 2.95, 2.5, 3.45, 0, 4, 80, energy_spectrum_0nubb, energy_spectrum_2nubb_2MeV, energy_spectrum_208Tl, energy_spectrum_214Bi, c_sensitivity_spectrum);
-
-    energy_spectrum_0nubb->SaveAs("root_outpute/energy_spectrum_with_B_82Se_0nubb.root");
-    energy_spectrum_2nubb->SaveAs("root_outpute/energy_spectrum_with_B_82Se_2nubb.root");
-    energy_spectrum_2nubb_2MeV->SaveAs("root_outpute/energy_spectrum_with_B_82Se_2nubb_2MeV.root");
-    energy_spectrum_208Tl->SaveAs("root_outpute/energy_spectrum_with_B_82Se_208Tl.root");
-    energy_spectrum_214Bi->SaveAs("root_outpute/energy_spectrum_with_B_82Se_214Bi.root");
-
-    efficiency_spectrum_0nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_0nubb.root");
-    efficiency_spectrum_2nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_2nubb.root");
-    efficiency_spectrum_2nubb_2MeV->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_2nubb_2MeV.root");
-    efficiency_spectrum_208Tl->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_208Tl.root");
-    efficiency_spectrum_214Bi->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_214Bi.root");
-
-    Nbackground_spectrum_2nubb->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_2nubb.root");
-    Nbackground_spectrum_2nubb_2MeV->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_2nubb_2MeV.root");
-    Nbackground_spectrum_208Tl->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_208Tl.root");
-    Nbackground_spectrum_214Bi->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_214Bi.root");
-
-  }
-
-  else if (field && isotope == "150Nd") {
-
-    TH1F *energy_spectrum_2nubb = henergy_sum(isotope, field,"2nubb",0,4,80);
-    TH1F *efficiency_spectrum_2nubb = hefficiency(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb);
-    TH1F *Nbackground_spectrum_2nubb = hN_background(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb,efficiency_spectrum_2nubb);
-
-    TH1F *energy_spectrum_214Bi = henergy_sum(isotope, field,"214Bi",0,4,80);
-    TH1F *efficiency_spectrum_214Bi = hefficiency(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi);
-    TH1F *Nbackground_spectrum_214Bi = hN_background(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi,efficiency_spectrum_214Bi);
-
-    TH1F *energy_spectrum_208Tl = henergy_sum(isotope, field,"208Tl",0,4,80);
-    TH1F *efficiency_spectrum_208Tl = hefficiency(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl);
-    TH1F *Nbackground_spectrum_208Tl = hN_background(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl,efficiency_spectrum_208Tl);
-
-    // TH2F *sensitivity = hSensitivity(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV,efficiency_spectrum_2nubb_2MeV,Nbackground_spectrum_2nubb_2MeV);
-
-    c_energy_spectrum->cd();
-    gPad->SetLogy();
-    energy_spectrum_0nubb->Draw();
-    energy_spectrum_0nubb->SetTitle("Total energy spectrum");
-    energy_spectrum_0nubb->GetXaxis()->SetTitle("Etot");
-    energy_spectrum_0nubb->GetYaxis()->SetTitle("#Event");
-    energy_spectrum_0nubb->GetYaxis()->SetRangeUser(1,pow(10,6));
-    energy_spectrum_0nubb->SetLineColor(1);
-
-    energy_spectrum_2nubb->Draw("SAME");
-    energy_spectrum_2nubb->SetLineColor(2);
-
-    energy_spectrum_214Bi->Draw("SAME");
-    energy_spectrum_214Bi->SetLineColor(4);
-
-    energy_spectrum_208Tl->SetLineColor(6);
-    energy_spectrum_208Tl->Draw("SAME");
-
-    auto legend1 = new TLegend(0.75,0.6,0.89,0.89);
-    legend1->AddEntry(energy_spectrum_0nubb,"0nubb","l");
-    legend1->AddEntry(energy_spectrum_2nubb,"2nubb","l");
-    legend1->AddEntry(energy_spectrum_214Bi,"214Bi","l");
-    legend1->AddEntry(energy_spectrum_208Tl,"208Tl","l");
-    legend1->Draw();
-
-
-    c_efficiency_spectrum->cd();
-    gPad->SetLogy();
-    efficiency_spectrum_0nubb->Draw();
-    efficiency_spectrum_0nubb->SetTitle("Efficiency spectrum");
-    efficiency_spectrum_0nubb->GetXaxis()->SetTitle("E>E_min");
-    efficiency_spectrum_0nubb->GetYaxis()->SetTitle("Efficiency");
-    efficiency_spectrum_0nubb->GetYaxis()->SetRangeUser(pow(10,-7),1);
-    efficiency_spectrum_0nubb->SetLineColor(1);
-
-    efficiency_spectrum_2nubb->Draw("SAME");
-
-    efficiency_spectrum_214Bi->Draw("SAME");
-    efficiency_spectrum_214Bi->SetLineColor(4);
-
-    efficiency_spectrum_208Tl->Draw("SAME");
-    efficiency_spectrum_208Tl->SetLineColor(6);
-
-    efficiency_spectrum_2nubb->SetLineColor(2);
-
-
-    auto legend2 = new TLegend(0.75,0.6,0.89,0.89);
-    legend2->AddEntry(efficiency_spectrum_0nubb,"0nubb","l");
-    legend2->AddEntry(efficiency_spectrum_2nubb,"2nubb","l");
-    legend2->AddEntry(efficiency_spectrum_214Bi,"214Bi","l");
-    legend2->AddEntry(efficiency_spectrum_208Tl,"208Tl","l");
-    legend2->Draw();
-
-    c_Nbackground_spectrum->cd();
-    gPad->SetLogy();
-
-    Nbackground_spectrum_2nubb->Draw();
-    Nbackground_spectrum_2nubb->GetYaxis()->SetRangeUser(pow(10,-3),pow(10,6));
-    Nbackground_spectrum_2nubb->SetTitle("Expected number of background events");
-    Nbackground_spectrum_2nubb->GetXaxis()->SetTitle("E>E_min");
-    Nbackground_spectrum_2nubb->GetYaxis()->SetTitle("#Background");
-    Nbackground_spectrum_2nubb->SetLineColor(2);
-
-    Nbackground_spectrum_214Bi->Draw("SAME");
-    Nbackground_spectrum_214Bi->SetLineColor(7);
-
-    Nbackground_spectrum_208Tl->Draw("SAME");
-    Nbackground_spectrum_208Tl->SetLineColor(6);
-
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_2nubb);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_208Tl);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_214Bi);
-    Nbackground_tot_spectrum->Draw("SAME");
-
-
-    auto legend3= new TLegend(0.75,0.6,0.89,0.89);
-    legend3->AddEntry(Nbackground_spectrum_2nubb,"2nubb","l");
-    legend3->AddEntry(Nbackground_spectrum_214Bi,"214Bi","l");
-    legend3->AddEntry(Nbackground_spectrum_208Tl,"208Tl","l");
-    legend3->AddEntry(Nbackground_tot_spectrum,"TOTAL","l");
-    legend3->Draw();
-
-    efficiency_spectrum_0nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_150Nd_0nubb.root");
-    efficiency_spectrum_2nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_150Nd_2nubb.root");
-    efficiency_spectrum_208Tl->SaveAs("root_outpute/efficiency_spectrum_with_B_150Nd_208Tl.root");
-    efficiency_spectrum_214Bi->SaveAs("root_outpute/efficiency_spectrum_with_B_150Nd_214Bi.root");
-
-
-    TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,2.85,3.35,20,2.85,3.85);
-
-    Double_t Nbackground = 0;
-    Double_t Nbackground_2nubb = 0;
-    Double_t Nbackground_208Tl = 0;
-    Double_t Nbackground_214Bi = 0;
-    Double_t Nbackground_222Rn = 0;
-    Double_t sensitivity = 0;
-    Double_t efficiency_0nubb = 0;
-    Double_t efficiency_2nubb = 0;
-    Double_t efficiency_2nubb_2MeV = 0;
-    Double_t efficiency_208Tl = 0;
-    Double_t efficiency_214Bi = 0;
-    Double_t expectedSignalEventLimit = 0;
-    int cointer = 0;
-
-    for (int i=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.85);i<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.35);i++) {
-      for (int j=i+1;j<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.85);j++) {
-
-        efficiency_0nubb += energy_spectrum_0nubb->Integral(i,j);
-        efficiency_0nubb *= 1./9574121;
-
-        efficiency_2nubb += energy_spectrum_2nubb->Integral(i,j);
-        efficiency_2nubb *= 1./9656794;
-        Nbackground_2nubb = ((Na*log(2))/mass_mol_150Nd)*((efficiency_2nubb*exposure)/T_2nubb_150Nd);
-
-        efficiency_214Bi += energy_spectrum_214Bi->Integral(i,j);
-        efficiency_214Bi *= 1./9778522;
-        Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
-
-        efficiency_208Tl += energy_spectrum_208Tl->Integral(i,j);
-        efficiency_208Tl *= 1./9773130;
-        Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
-
-        Nbackground_222Rn = Nbackground_214Bi*4.39;
-
-        Nbackground = Nbackground_2nubb+Nbackground_208Tl+Nbackground_214Bi+Nbackground_222Rn;
-        if (Nbackground > 200.) {
-          expectedSignalEventLimit = TMath::Sqrt(Nbackground);
-        }
-        else {
-          expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
-        }
-
-
-        sensitivity = ((Na*log(2))/mass_mol_150Nd)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-
-        sensitivity_spectrum->SetBinContent(i+1-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.85),j+2-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.9),sensitivity);
-
-      }
-    }
-
-    cout << "T12 = " << get_ROI(sensitivity_spectrum).T12_max << endl;
-    cout << "mbb = " << "[" << mbb_min(get_ROI(sensitivity_spectrum).T12_max,isotope) << "," << mbb_max(get_ROI(sensitivity_spectrum).T12_max,isotope) << "]" << endl;
-
-    double efficiency_0nubb_ROI = energy_spectrum_0nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    cout << "0nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << efficiency_0nubb_ROI/9574121 << endl;
-
-
-    double efficiency_2nubb_2MeV_ROI = energy_spectrum_2nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_2nubb_2MeV_ROI = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV_ROI*exposure)/T_2nubb_82Se);
-    cout << "2nubb_2MeV " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_2nubb_2MeV_ROI/9656794 << endl;
-
-
-    double efficiency_208Tl_ROI = energy_spectrum_208Tl->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_208Tl_ROI = A_208Tl*efficiency_208Tl_ROI*exposure;
-    cout << "208Tl " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_208Tl_ROI/9773130 << endl;
-
-    double efficiency_214Bi_ROI = energy_spectrum_214Bi->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_214Bi_ROI = A_214Bi*efficiency_214Bi_ROI*exposure;
-    cout << "214Bi " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_214Bi_ROI/9778522 << endl;
-
-    c_sensitivity_spectrum->cd();
-    TGaxis::SetMaxDigits(2);
-    sensitivity_spectrum->Draw("colz TEXT");
-    sensitivity_spectrum->SetTitle("Expected sensitivity");
-    sensitivity_spectrum->GetXaxis()->SetTitle("Sup ROI (MeV)");
-    sensitivity_spectrum->GetYaxis()->SetTitle("Inf ROI (MeV)");
-
-  }
-
-  else if (!field && isotope == "82Se") {
-
-    TH1F *energy_spectrum_2nubb_2MeV = henergy_sum(isotope, field,"2nubb_2MeV",0,4,80);
-    TH1F *efficiency_spectrum_2nubb_2MeV = hefficiency(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV);
-    TH1F *Nbackground_spectrum_2nubb_2MeV = hN_background(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV,efficiency_spectrum_2nubb_2MeV);
-
-    TH1F *energy_spectrum_214Bi = henergy_sum(isotope, field,"214Bi",0,4,80);
-    TH1F *efficiency_spectrum_214Bi = hefficiency(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi);
-    TH1F *Nbackground_spectrum_214Bi = hN_background(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi,efficiency_spectrum_214Bi);
-
-    TH1F *energy_spectrum_208Tl = henergy_sum(isotope, field,"208Tl",0,4,80);
-    TH1F *efficiency_spectrum_208Tl = hefficiency(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl);
-    TH1F *Nbackground_spectrum_208Tl = hN_background(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl,efficiency_spectrum_208Tl);
-
-    // TH2F *sensitivity = hSensitivity(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV,efficiency_spectrum_2nubb_2MeV,Nbackground_spectrum_2nubb_2MeV);
-
-    c_energy_spectrum->cd();
-    gPad->SetLogy();
-    energy_spectrum_0nubb->Draw("HIST");
-    energy_spectrum_0nubb->SetTitle("Total energy spectrum");
-    energy_spectrum_0nubb->GetXaxis()->SetTitle("Etot");
-    energy_spectrum_0nubb->GetYaxis()->SetTitle("#Event");
-    energy_spectrum_0nubb->GetYaxis()->SetRangeUser(1,pow(10,6));
-    energy_spectrum_0nubb->SetLineColor(1);
-
-    energy_spectrum_2nubb_2MeV->Draw("HIST SAME");
-    energy_spectrum_2nubb_2MeV->SetLineColor(3);
-
-    energy_spectrum_214Bi->Draw("HIST SAME");
-    energy_spectrum_214Bi->SetLineColor(4);
-
-    energy_spectrum_208Tl->Draw("HIST SAME");
-    energy_spectrum_208Tl->SetLineColor(6);
-
-
-    auto legend1 = new TLegend(0.75,0.6,0.89,0.89);
-    legend1->AddEntry(energy_spectrum_0nubb,"0nubb","l");
-    legend1->AddEntry(energy_spectrum_2nubb_2MeV,"2nubb_2MeV","l");
-    legend1->AddEntry(energy_spectrum_214Bi,"214Bi","l");
-    legend1->AddEntry(energy_spectrum_208Tl,"208Tl","l");
-    legend1->Draw();
-
-
-    c_efficiency_spectrum->cd();
-    gPad->SetLogy();
-    efficiency_spectrum_0nubb->Draw();
-    efficiency_spectrum_0nubb->SetTitle("Efficiency spectrum");
-    efficiency_spectrum_0nubb->GetXaxis()->SetTitle("E>E_min");
-    efficiency_spectrum_0nubb->GetYaxis()->SetTitle("Efficiency");
-    efficiency_spectrum_0nubb->GetYaxis()->SetRangeUser(pow(10,-7),1);
-    efficiency_spectrum_0nubb->SetLineColor(1);
-
-    efficiency_spectrum_2nubb_2MeV->Draw("SAME");
-    efficiency_spectrum_2nubb_2MeV->SetLineColor(3);
-
-    efficiency_spectrum_214Bi->Draw("SAME");
-    efficiency_spectrum_214Bi->SetLineColor(4);
-
-    efficiency_spectrum_208Tl->Draw("SAME");
-    efficiency_spectrum_208Tl->SetLineColor(6);
-
-    auto legend2 = new TLegend(0.75,0.6,0.89,0.89);
-    legend2->AddEntry(efficiency_spectrum_0nubb,"0nubb","l");
-    legend2->AddEntry(efficiency_spectrum_2nubb_2MeV,"2nubb_2MeV","l");
-    legend2->AddEntry(efficiency_spectrum_214Bi,"214Bi","l");
-    legend2->AddEntry(efficiency_spectrum_208Tl,"208Tl","l");
-    legend2->Draw();
-
-    c_Nbackground_spectrum->cd();
-    gPad->SetLogy();
-
-    Nbackground_spectrum_2nubb_2MeV->Draw();
-    Nbackground_spectrum_2nubb_2MeV->SetTitle("Expected number of background events");
-    Nbackground_spectrum_2nubb_2MeV->GetXaxis()->SetTitle("E>E_min");
-    Nbackground_spectrum_2nubb_2MeV->GetYaxis()->SetTitle("#Background");
-    Nbackground_spectrum_2nubb_2MeV->GetYaxis()->SetRangeUser(pow(10,-3),pow(10,6));
-    Nbackground_spectrum_2nubb_2MeV->SetLineColor(3);
-
-    Nbackground_spectrum_214Bi->Draw("SAME");
-    Nbackground_spectrum_214Bi->SetLineColor(7);
-
-    Nbackground_spectrum_208Tl->Draw("SAME");
-    Nbackground_spectrum_208Tl->SetLineColor(6);
-
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_2nubb_2MeV);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_208Tl);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_214Bi);
-    Nbackground_tot_spectrum->Draw("SAME");
-
-
-    auto legend3= new TLegend(0.75,0.6,0.89,0.89);
-    legend3->AddEntry(Nbackground_spectrum_2nubb_2MeV,"2nubb_2MeV","l");
-    legend3->AddEntry(Nbackground_spectrum_214Bi,"214Bi","l");
-    legend3->AddEntry(Nbackground_spectrum_208Tl,"208Tl","l");
-    legend3->AddEntry(Nbackground_tot_spectrum,"TOTAL","l");
+    legend3->AddEntry(Nbackground_spectrum_222Rn,"^{222}Rn","l");
+    legend3->AddEntry(Nbackground_spectrum_214Bi,"^{214}Bi","l");
+    legend3->AddEntry(Nbackground_spectrum_208Tl,"^{208}Tl","l");
+    legend3->AddEntry(Nbackground_tot_spectrum,"Total","l");
     legend3->Draw();
 
 
 
-    TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,2.45,2.95,20,2.45,3.45);
-
-    Double_t Nbackground = 0;
-    Double_t Nbackground_2nubb = 0;
-    Double_t Nbackground_2nubb_2MeV = 0;
-    Double_t Nbackground_208Tl = 0;
-    Double_t Nbackground_214Bi = 0;
-    Double_t Nbackground_222Rn;
-    if (activities == "zero") {
-      Nbackground_222Rn = 0;
-    }
-    else {
-      Nbackground_222Rn = 0.39;
-    }
-    Double_t sensitivity = 0;
-    Double_t efficiency_0nubb = 0;
-    Double_t efficiency_2nubb = 0;
-    Double_t efficiency_2nubb_2MeV = 0;
-    Double_t efficiency_208Tl = 0;
-    Double_t efficiency_214Bi = 0;
-    Double_t expectedSignalEventLimit = 0;
-
-    for (int i=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.45);i<=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.95);i++) {
-      for (int j=i+1;j<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.45);j++) {
-
-        efficiency_0nubb += energy_spectrum_0nubb->Integral(i,j);
-        efficiency_0nubb *= 1./pow(10,7);
-
-        efficiency_2nubb_2MeV += energy_spectrum_2nubb_2MeV->Integral(i,j);
-        efficiency_2nubb_2MeV *= 1./pow(10,7);
-        Nbackground_2nubb_2MeV = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV*exposure)/T_2nubb_82Se);
-
-        efficiency_214Bi += energy_spectrum_214Bi->Integral(i,j);
-        efficiency_214Bi *= 1./pow(10,7);
-        Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
-        Nbackground_222Rn = Nbackground_214Bi*4.39;
-
-        efficiency_208Tl += energy_spectrum_208Tl->Integral(i,j);
-        efficiency_208Tl *= 1./pow(10,7);
-        Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
-
-        Nbackground = Nbackground_2nubb_2MeV+Nbackground_208Tl+Nbackground_214Bi;
-        if (Nbackground > 200.) {
-          expectedSignalEventLimit = TMath::Sqrt(Nbackground);
-        }
-        else {
-          expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
-        }
-
-
-        sensitivity = ((Na*log(2))/mass_mol_82Se)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-
-        sensitivity_spectrum->SetBinContent(i+1-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.45),j+2-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.5),sensitivity);
-
-      }
-    }
-
-    cout << "T12 = " << get_ROI(sensitivity_spectrum).T12_max << endl;
-    cout << "mbb = " << "[" << mbb_min(get_ROI(sensitivity_spectrum).T12_max,isotope) << "," << mbb_max(get_ROI(sensitivity_spectrum).T12_max,isotope) << "]" << endl;
-
-    double efficiency_0nubb_ROI = energy_spectrum_0nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    cout << "0nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << efficiency_0nubb_ROI/pow(10,7) << endl;
-
-
-    double efficiency_2nubb_2MeV_ROI = energy_spectrum_2nubb_2MeV->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_2nubb_2MeV_ROI = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV_ROI*exposure)/T_2nubb_82Se);
-    cout << "2nubb_2MeV " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_2nubb_2MeV_ROI/pow(10,7) << endl;
-
-
-    double efficiency_208Tl_ROI = energy_spectrum_208Tl->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_208Tl_ROI = A_208Tl*efficiency_208Tl_ROI*exposure;
-    cout << "208Tl " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_208Tl_ROI/pow(10,7) << endl;
-
-
-    double efficiency_214Bi_ROI = energy_spectrum_214Bi->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_214Bi_ROI = A_214Bi*efficiency_214Bi_ROI*exposure;
-    cout << "214Bi " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_214Bi_ROI/pow(10,7) << endl;
-
+    // /// sensitivity spectra
 
     c_sensitivity_spectrum->cd();
-    TGaxis::SetMaxDigits(2);
-    sensitivity_spectrum->Draw("colz TEXT");
-    sensitivity_spectrum->SetTitle("Expected sensitivity");
-    sensitivity_spectrum->GetXaxis()->SetTitle("Sup ROI (MeV)");
-    sensitivity_spectrum->GetYaxis()->SetTitle("Inf ROI (MeV)");
+    TGaxis::SetMaxDigits(3);
+    gStyle->SetPalette(20,python_viridis) ;
+    sensitivity_spectrum->Scale(1./1e24) ;
+    configF_histo2D(sensitivity_spectrum,"", "E_{min} (MeV)","E_{max} (MeV)","COLZTEXT") ;
+    sensitivity_spectrum->SetMarkerSize(1) ;
+    sensitivity_spectrum->SetTitle("") ;
+    gStyle->SetPaintTextFormat("1.5f") ;
+
+    TLine* line2 = new TLine(get_ROI(sensitivity_spectrum).Einf_ROI,borne_inf_min_ROI,get_ROI(sensitivity_spectrum).Einf_ROI,borne_sup_max_ROI) ;
+    TLine* line3 = new TLine(borne_inf_min_ROI,get_ROI(sensitivity_spectrum).Esup_ROI,borne_sup_min_ROI,get_ROI(sensitivity_spectrum).Esup_ROI) ;
+
+    line2->SetLineWidth(2) ;
+    line3->SetLineWidth(2) ;
+    line2->Draw("SAME") ;
+    line3->Draw("SAME") ;
 
 
-    energy_spectrum_0nubb->SaveAs("root_outpute/energy_spectrum_without_B_82Se_0nubb.root");
-    energy_spectrum_2nubb_2MeV->SaveAs("root_outpute/energy_spectrum_without_B_82Se_2nubb_2MeV.root");
-    energy_spectrum_208Tl->SaveAs("root_outpute/energy_spectrum_without_B_82Se_208Tl.root");
-    energy_spectrum_214Bi->SaveAs("root_outpute/energy_spectrum_without_B_82Se_214Bi.root");
+    auto text = new TPaveText(0.823,0.936,0.946,0.995,"NDC");
+    text->SetBorderSize(0) ;
+    text->SetFillColor(0) ;
+    text->AddText("x 10^{24} (y)") ;
+    text->Draw() ;
 
-    efficiency_spectrum_0nubb->SaveAs("root_outpute/efficiency_spectrum_without_B_82Se_0nubb.root");
-    efficiency_spectrum_2nubb_2MeV->SaveAs("root_outpute/efficiency_spectrum_without_B_82Se_2nubb_2MeV.root");
-    efficiency_spectrum_208Tl->SaveAs("root_outpute/efficiency_spectrum_without_B_82Se_208Tl.root");
-    efficiency_spectrum_214Bi->SaveAs("root_outpute/efficiency_spectrum_without_B_82Se_214Bi.root");
-
-    Nbackground_spectrum_2nubb_2MeV->SaveAs("root_outpute/Nbackground_spectrum_without_B_82Se_2nubb_2MeV.root");
-    Nbackground_spectrum_208Tl->SaveAs("root_outpute/Nbackground_spectrum_without_B_82Se_208Tl.root");
-    Nbackground_spectrum_214Bi->SaveAs("root_outpute/Nbackground_spectrum_without_B_82Se_214Bi.root");
-
-  }
-
-  else if (!field && isotope == "150Nd") {
-
-    TH1F *energy_spectrum_2nubb = henergy_sum(isotope, field,"2nubb",0,4,80);
-    TH1F *efficiency_spectrum_2nubb = hefficiency(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb);
-    TH1F *Nbackground_spectrum_2nubb = hN_background(isotope, field,"2nubb",0,4,80,energy_spectrum_2nubb,efficiency_spectrum_2nubb);
-
-    TH1F *energy_spectrum_214Bi = henergy_sum(isotope, field,"214Bi",0,4,80);
-    TH1F *efficiency_spectrum_214Bi = hefficiency(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi);
-    TH1F *Nbackground_spectrum_214Bi = hN_background(isotope, field,"214Bi",0,4,80,energy_spectrum_214Bi,efficiency_spectrum_214Bi);
-
-    TH1F *energy_spectrum_208Tl = henergy_sum(isotope, field,"208Tl",0,4,80);
-    TH1F *efficiency_spectrum_208Tl = hefficiency(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl);
-    TH1F *Nbackground_spectrum_208Tl = hN_background(isotope, field,"208Tl",0,4,80,energy_spectrum_208Tl,efficiency_spectrum_208Tl);
-
-    // TH2F *sensitivity = hSensitivity(isotope, field,"2nubb_2MeV",0,4,80,energy_spectrum_2nubb_2MeV,efficiency_spectrum_2nubb_2MeV,Nbackground_spectrum_2nubb_2MeV);
-
-
-    c_energy_spectrum->cd();
-    gPad->SetLogy();
-    energy_spectrum_0nubb->Draw("HIST");
-    energy_spectrum_0nubb->SetTitle("Total energy spectrum");
-    energy_spectrum_0nubb->GetXaxis()->SetTitle("Etot");
-    energy_spectrum_0nubb->GetYaxis()->SetTitle("#Event");
-    energy_spectrum_0nubb->GetYaxis()->SetRangeUser(1,pow(10,6));
-    energy_spectrum_0nubb->SetLineColor(1);
-
-    energy_spectrum_2nubb->Draw("HIST SAME");
-    energy_spectrum_2nubb->SetLineColor(2);
-
-    energy_spectrum_214Bi->Draw("HIST SAME");
-    energy_spectrum_214Bi->SetLineColor(4);
-
-    energy_spectrum_208Tl->SetLineColor(6);
-    energy_spectrum_208Tl->Draw("HIST SAME");
-
-    auto legend1 = new TLegend(0.75,0.6,0.89,0.89);
-    legend1->AddEntry(energy_spectrum_0nubb,"0nubb","l");
-    legend1->AddEntry(energy_spectrum_2nubb,"2nubb","l");
-    legend1->AddEntry(energy_spectrum_214Bi,"214Bi","l");
-    legend1->AddEntry(energy_spectrum_208Tl,"208Tl","l");
-    legend1->Draw();
-
-
-    c_efficiency_spectrum->cd();
-    gPad->SetLogy();
-    efficiency_spectrum_0nubb->Draw();
-    efficiency_spectrum_0nubb->SetTitle("Efficiency spectrum");
-    efficiency_spectrum_0nubb->GetXaxis()->SetTitle("E>E_min");
-    efficiency_spectrum_0nubb->GetYaxis()->SetTitle("Efficiency");
-    efficiency_spectrum_0nubb->GetYaxis()->SetRangeUser(pow(10,-7),1);
-    efficiency_spectrum_0nubb->SetLineColor(1);
-
-    efficiency_spectrum_2nubb->Draw("SAME");
-    efficiency_spectrum_2nubb->SetLineColor(2);
-
-    efficiency_spectrum_214Bi->Draw("SAME");
-    efficiency_spectrum_214Bi->SetLineColor(4);
-
-    efficiency_spectrum_208Tl->Draw("SAME");
-    efficiency_spectrum_208Tl->SetLineColor(6);
-
-
-
-    auto legend2 = new TLegend(0.75,0.6,0.89,0.89);
-    legend2->AddEntry(efficiency_spectrum_0nubb,"0nubb","l");
-    legend2->AddEntry(efficiency_spectrum_2nubb,"2nubb","l");
-    legend2->AddEntry(efficiency_spectrum_214Bi,"214Bi","l");
-    legend2->AddEntry(efficiency_spectrum_208Tl,"208Tl","l");
-    legend2->Draw();
-
-    c_Nbackground_spectrum->cd();
-    gPad->SetLogy();
-
-    Nbackground_spectrum_2nubb->Draw();
-    Nbackground_spectrum_2nubb->SetTitle("Expected number of background events");
-    Nbackground_spectrum_2nubb->GetXaxis()->SetTitle("E>E_min");
-    Nbackground_spectrum_2nubb->GetYaxis()->SetTitle("#Background");
-    Nbackground_spectrum_2nubb->GetYaxis()->SetRangeUser(pow(10,-3),pow(10,6));
-    Nbackground_spectrum_2nubb->SetLineColor(2);
-
-    Nbackground_spectrum_214Bi->Draw("SAME");
-    Nbackground_spectrum_214Bi->SetLineColor(7);
-
-    Nbackground_spectrum_208Tl->Draw("SAME");
-    Nbackground_spectrum_208Tl->SetLineColor(6);
-
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_2nubb);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_208Tl);
-    Nbackground_tot_spectrum->Add(Nbackground_spectrum_214Bi);
-    Nbackground_tot_spectrum->Draw("SAME");
-
-
-    auto legend3= new TLegend(0.75,0.6,0.89,0.89);
-    legend3->AddEntry(Nbackground_spectrum_2nubb,"2nubb","l");
-    legend3->AddEntry(Nbackground_spectrum_214Bi,"214Bi","l");
-    legend3->AddEntry(Nbackground_spectrum_208Tl,"208Tl","l");
-    legend3->AddEntry(Nbackground_tot_spectrum,"TOTAL","l");
-    legend3->Draw();
-
-
-    TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,2.85,3.35,20,2.85,3.85);
-
-    Double_t Nbackground = 0;
-    Double_t Nbackground_2nubb = 0;
-    Double_t Nbackground_208Tl = 0;
-    Double_t Nbackground_214Bi = 0;
-    Double_t Nbackground_222Rn = 0;
-    Double_t sensitivity = 0;
-    Double_t efficiency_0nubb = 0;
-    Double_t efficiency_2nubb = 0;
-    Double_t efficiency_2nubb_2MeV = 0;
-    Double_t efficiency_208Tl = 0;
-    Double_t efficiency_214Bi = 0;
-    Double_t expectedSignalEventLimit = 0;
-    int cointer = 0;
-
-    for (int i=Nbackground_tot_spectrum->GetXaxis()->FindBin(2.85);i<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.35);i++) {
-      for (int j=i+1;j<=Nbackground_tot_spectrum->GetXaxis()->FindBin(3.85);j++) {
-
-        efficiency_0nubb += energy_spectrum_0nubb->Integral(i,j);
-        efficiency_0nubb *= 1./9574121;
-
-        efficiency_2nubb += energy_spectrum_2nubb->Integral(i,j);
-        efficiency_2nubb *= 1./9574121;
-        Nbackground_2nubb = ((Na*log(2))/mass_mol_150Nd)*((efficiency_2nubb*exposure)/T_2nubb_150Nd);
-
-        efficiency_214Bi += energy_spectrum_214Bi->Integral(i,j);
-        efficiency_214Bi *= 1./9574121;
-        //Nbackground_214Bi = 2.3;
-        //Nbackground_222Rn = 10.1;
-        Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
-        Nbackground_222Rn = Nbackground_214Bi*4.39;
-
-
-        efficiency_208Tl += energy_spectrum_208Tl->Integral(i,j);
-        efficiency_208Tl *= 1./9574121;
-        Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
-
-        Nbackground = Nbackground_2nubb+Nbackground_208Tl+Nbackground_214Bi+Nbackground_222Rn;
-        if (Nbackground > 200.) {
-          expectedSignalEventLimit = TMath::Sqrt(Nbackground);
-        }
-        else {
-          expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
-        }
-
-
-        sensitivity = ((Na*log(2))/mass_mol_150Nd)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-
-        sensitivity_spectrum->SetBinContent(i+1-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.85),j+2-Nbackground_tot_spectrum->GetXaxis()->FindBin(2.9),sensitivity);
-
-      }
+    if (field) {
+      c_energy_spectrum->SaveAs(Form("plots/energy_spectrum_with_B_%s.pdf",isotope.c_str()));
+      c_efficiency_spectrum->SaveAs(Form("plots/efficiency_spectrum_with_B_%s.pdf",isotope.c_str()));
+      c_Nbackground_spectrum->SaveAs(Form("plots/Nbackground_spectrum_with_B_%s.pdf",isotope.c_str()));
+      c_sensitivity_spectrum->SaveAs(Form("plots/sensitivity_spectrum_with_B_%s.pdf",isotope.c_str()));
     }
 
-    cout << "T12 = " << get_ROI(sensitivity_spectrum).T12_max << endl;
-    cout << "mbb = " << "[" << mbb_min(get_ROI(sensitivity_spectrum).T12_max,isotope) << "," << mbb_max(get_ROI(sensitivity_spectrum).T12_max,isotope) << "]" << endl;
+    else if (!field) {
+      c_energy_spectrum->SaveAs(Form("plots/energy_spectrum_without_B_%s.pdf",isotope.c_str()));
+      c_efficiency_spectrum->SaveAs(Form("plots/efficiency_spectrum_without_B_%s.pdf",isotope.c_str()));
+      c_Nbackground_spectrum->SaveAs(Form("plots/Nbackground_spectrum_without_B_%s.pdf",isotope.c_str()));
+      c_sensitivity_spectrum->SaveAs(Form("plots/sensitivity_spectrum_without_B_%s.pdf",isotope.c_str()));
+    }
 
-    double efficiency_0nubb_ROI = energy_spectrum_0nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    cout << "0nubb " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << efficiency_0nubb_ROI/9574121 << endl;
-
-
-    double efficiency_2nubb_2MeV_ROI = energy_spectrum_2nubb->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_2nubb_2MeV_ROI = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV_ROI*exposure)/T_2nubb_82Se);
-    cout << "2nubb_2MeV " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_2nubb_2MeV_ROI/9656794 << endl;
-
-
-    double efficiency_208Tl_ROI = energy_spectrum_208Tl->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_208Tl_ROI = A_208Tl*efficiency_208Tl_ROI*exposure;
-    cout << "208Tl " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_208Tl_ROI/9773130 << endl;
-
-
-    double efficiency_214Bi_ROI = energy_spectrum_214Bi->Integral(Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Einf_ROI),Nbackground_tot_spectrum->GetXaxis()->FindBin(get_ROI(sensitivity_spectrum).Esup_ROI));
-    double Nbackground_214Bi_ROI = A_214Bi*efficiency_214Bi_ROI*exposure;
-    cout << "214Bi " << "[" << get_ROI(sensitivity_spectrum).Einf_ROI << "," << get_ROI(sensitivity_spectrum).Esup_ROI << "] = " << Nbackground_214Bi_ROI/9778522 << endl;
-
-    c_sensitivity_spectrum->cd();
-    TGaxis::SetMaxDigits(2);
-    sensitivity_spectrum->Draw("colz TEXT");
-    sensitivity_spectrum->SetTitle("Expected sensitivity");
-    sensitivity_spectrum->GetXaxis()->SetTitle("Sup ROI (MeV)");
-    sensitivity_spectrum->GetYaxis()->SetTitle("Inf ROI (MeV)");
 
   }
 
+  // energy_spectrum_0nubb->SaveAs("root_outpute/energy_spectrum_with_B_82Se_0nubb.root");
+  // energy_spectrum_2nubb->SaveAs("root_outpute/energy_spectrum_with_B_82Se_2nubb.root");
+  // energy_spectrum_208Tl->SaveAs("root_outpute/energy_spectrum_with_B_82Se_208Tl.root");
+  // energy_spectrum_214Bi->SaveAs("root_outpute/energy_spectrum_with_B_82Se_214Bi.root");
 
+  // efficiency_spectrum_0nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_0nubb.root");
+  // efficiency_spectrum_2nubb->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_2nubb.root");
+  // efficiency_spectrum_208Tl->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_208Tl.root");
+  // efficiency_spectrum_214Bi->SaveAs("root_outpute/efficiency_spectrum_with_B_82Se_214Bi.root");
 
+  // Nbackground_spectrum_2nubb->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_2nubb.root");
+  // Nbackground_spectrum_208Tl->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_208Tl.root");
+  // Nbackground_spectrum_214Bi->SaveAs("root_outpute/Nbackground_spectrum_with_B_82Se_214Bi.root");
 
-  string file_path_Canvas1;
+} // end of macro
 
-  if (field && isotope == "82Se") {
-    c_energy_spectrum->SaveAs("plots/energy_spectrum_with_B_82Se.pdf");
-    c_efficiency_spectrum->SaveAs("plots/efficiency_spectrum_with_B_82Se.pdf");
-    c_Nbackground_spectrum->SaveAs("plots/Nbackground_spectrum_with_B_82Se.pdf");
-    c_sensitivity_spectrum->SaveAs("plots/sensitivity_spectrum_with_B_82Se.pdf");
-  }
-
-  else if (!field &&  isotope == "82Se") {
-    c_energy_spectrum->SaveAs("plots/energy_spectrum_without_B_82Se.pdf");
-    c_efficiency_spectrum->SaveAs("plots/efficiency_spectrum_without_B_82Se.pdf");
-    c_Nbackground_spectrum->SaveAs("plots/Nbackground_spectrum_without_B_82Se.pdf");
-    c_sensitivity_spectrum->SaveAs("plots/sensitivity_spectrum_without_B_82Se.pdf");
-  }
-
-  else if (field &&  isotope == "150Nd") {
-    c_energy_spectrum->SaveAs("plots/energy_spectrum_with_B_150Nd.pdf");
-    c_efficiency_spectrum->SaveAs("plots/efficiency_spectrum_with_B_150Nd.pdf");
-    c_Nbackground_spectrum->SaveAs("plots/Nbackground_spectrum_with_B_150Nd.pdf");
-    c_sensitivity_spectrum->SaveAs("plots/sensitivity_spectrum_with_B_150Nd.pdf");
-  }
-
-  else if (!field &&  isotope == "150Nd") {
-    c_energy_spectrum->SaveAs("plots/energy_spectrum_without_B_150Nd.pdf");
-    c_efficiency_spectrum->SaveAs("plots/efficiency_spectrum_without_B_150Nd.pdf");
-    c_Nbackground_spectrum->SaveAs("plots/Nbackground_spectrum_without_B_150Nd.pdf");
-    c_sensitivity_spectrum->SaveAs("plots/sensitivity_spectrum_without_B_150Nd.pdf");
-  }
-
-}
 
 ///A function that create an histogram filled with electrons' energy sums for the corresponding
 ///process/isotope/field -> energy spectra
@@ -1010,9 +529,11 @@ TH1F *henergy_sum(string isotope, bool field, string process, double xmin, doubl
   string file_path;
   if (field == 1) {
     file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/with_B/")+process+string("/root_file_")+process+string("_tot.root");
+    // file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/with_B/")+process+string("/root_file_0.root");
   }
   else if (field == 0) {
     file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/without_B/")+process+string("/root_file_")+process+string("_tot.root");
+    // file_path = "$WORKDIR/Analyses/SensitivityStudy/"+isotope+string("/without_B/")+process+string("/root_file_0.root");
   }
   else {
     cout << "From function henergy_sum: file does not exist" << endl ;
@@ -1076,8 +597,9 @@ TH1F *henergy_sum(string isotope, bool field, string process, double xmin, doubl
   ///Create histograms to be filled with reconstructed data outputs
 
   TH1F *henergy_sum = new TH1F("energy_sum","Energy sum histogram",nbins,xmin,xmax);
-
-  double test = 1.e7 ;
+  TH1F *hproba = new TH1F("proba","proba",50,0,9);
+  TH1F *hvertexY = new TH1F("vertexY","vertexY",100,0,3000);
+  TH1F *hvertexZ = new TH1F("vertexZ","vertexZ",100,0,3000);
 
   int nbr_events_tot = 0 ;
   int nbr_events_Pint = 0 ;
@@ -1086,48 +608,44 @@ TH1F *henergy_sum(string isotope, bool field, string process, double xmin, doubl
   for (Long64_t i=0;i<newtree->GetEntries();i++) {
     newtree->GetEntry(i);
 
+    nbr_events_tot++;
 
+    if (probability > cut_proba_int) {
+      nbr_events_Pint++;
 
-    // final_flux << "Event # " << event_counter << endl;
-
-
-    nbr_events_tot = i+1;
-
-
-    if (probability > 0.04) {
-
-      nbr_events_Pint = i+1;
-
-      if (foil_vertices_distance_y < 60 && foil_vertices_distance_z < 70) {
-
-        nbr_events_vertex = i+1;
+      if (foil_vertices_distance_y < cut_vertex_y && foil_vertices_distance_z < cut_vertex_z) {
+        nbr_events_vertex++;
 
         henergy_sum->Fill(energy_sum);
-
-        // if (process == "222Rn") {
-        //   cout << "Event # " <<  event_counter << " " << time_Emin << " " << time_Emax << " " << foil_vertices_distance_y << " " << foil_vertices_distance_z << endl ;
-        // }
+        hproba->Fill(10*probability);
+        hvertexY->Fill(foil_vertices_distance_y);
+        hvertexZ->Fill(foil_vertices_distance_z);
 
       }
     }
 
-    // if (i > 100) {
+
+    // if (i > 100000) {
     //   cout << "BREAK" << endl ;
     //   break ;
     // }
 
   }
 
-  cout << process << "  " << setprecision(9) << nbr_events_tot << " " << nbr_events_Pint << " " << nbr_events_vertex << endl;
+  cout << process << "  " << setprecision(9) <<  " " << nbr_events_tot << " " << nbr_events_Pint << " " << nbr_events_vertex << endl;
 
-  if (process == "2nubb_2MeV") {
-    if (isotope == "82Se") {
-      henergy_sum->Scale(0.0439913);
-    }
-    else if (isotope == "150Nd"){
-      henergy_sum->Scale(0.0986686);
-    }
-  }
+  // if (process == "2nubb_2MeV") {
+  //   if (isotope == "82Se") {
+  //     henergy_sum->Scale(scale_Se);
+  //   }
+  //   else if (isotope == "150Nd"){
+  //     henergy_sum->Scale(scale_Nd); // 0.0986686
+  //   }
+  // }
+
+  hproba->SaveAs(Form("InternalProba/root_files/Pint_%s.root",process.c_str())) ;
+  hvertexY->SaveAs(Form("Vertex/root_files/Vertex_Y_%s.root",process.c_str())) ;
+  hvertexZ->SaveAs(Form("Vertex/root_files/Vertex_Z_%s.root",process.c_str())) ;
 
   return henergy_sum;
 }
@@ -1151,16 +669,7 @@ TH1F *hN_background(string isotope, bool field, string process, double xmin, dou
     double efficiency = 0;
     efficiency = histo_efficiency->GetBinContent(emin);
 
-    if (process == "2nubb_2MeV") {
-      if (isotope == "82Se") {
-        nbr_bdf = ((Na*log(2))/mass_mol_82Se)*((efficiency*exposure)/T_2nubb_82Se);
-      }
-      else if (isotope == "150Nd") {
-        nbr_bdf = ((Na*log(2))/mass_mol_150Nd)*((efficiency*exposure)/T_2nubb_150Nd);
-      }
-    }
-
-    else if (process == "2nubb") {
+    if (process == "2nubb_2MeV" || process == "2nubb") {
       if (isotope == "82Se") {
         nbr_bdf = ((Na*log(2))/mass_mol_82Se)*((efficiency*exposure)/T_2nubb_82Se);
       }
@@ -1246,99 +755,69 @@ Double_t sensitivity_FC(string isotope, int bin_emin, int bin_emax, TH1F *histo_
 }
 
 
-TH2F *h2sensitivity(string isotope, bool field, double i_min, double i_max, double j_min, double j_max, double xmin, double xmax, int nbins,  TH1F *histo_energy_sum_0nubb = 0, TH1F *histo_energy_sum_2nubb_2MeV = 0, TH1F *histo_energy_sum_208Tl = 0, TH1F *histo_energy_sum_214Bi = 0,  TCanvas *c_sensitivity_spectrum = 0){
+TH1F *hefficiency(string isotope, bool field, string process, double xmin, double xmax, int nbins, TH1F *histo_energy_sum = 0){
 
-  if (!histo_energy_sum_0nubb) {
-    histo_energy_sum_0nubb = henergy_sum(isotope,field,"0nubb",xmin,xmax,nbins);
-  }
-  if (!histo_energy_sum_2nubb_2MeV) {
-    histo_energy_sum_2nubb_2MeV = henergy_sum(isotope,field,"2nubb_2MeV",xmin,xmax,nbins);
-  }
-  if (!histo_energy_sum_208Tl) {
-    histo_energy_sum_208Tl = henergy_sum(isotope,field,"208Tl",xmin,xmax,nbins);
-  }
-  if (!histo_energy_sum_214Bi) {
-    histo_energy_sum_214Bi = henergy_sum(isotope,field,"214Bi",xmin,xmax,nbins);
+  TH1F *heff = new TH1F("efficiency","Efficiency histogram",nbins,xmin,xmax);
+
+  if (!histo_energy_sum) {
+    histo_energy_sum = henergy_sum(isotope,field, process,xmin,xmax,nbins);
   }
 
-  c_sensitivity_spectrum = new TCanvas("canvas4","canvas4");
-  TH2F *sensitivity_spectrum = new TH2F("h2_ROI","low bound vs up bound",10,i_min,i_max,20,j_min,j_max);
+  int n_bins = histo_energy_sum->GetNbinsX();
 
-  Double_t Nbackground = 0;
-  Double_t Nbackground_2nubb_2MeV = 0;
-  Double_t Nbackground_208Tl = 0;
-  Double_t Nbackground_214Bi = 0;
-  Double_t sensitivity = 0;
-  double efficiency_0nubb = 0;
-  double efficiency_2nubb_2MeV = 0;
-  double efficiency_208Tl = 0;
-  double efficiency_214Bi = 0;
-  double expectedSignalEventLimit = 0;
+  for (int emin=0; emin<n_bins; emin++){
 
-  for (int i=histo_energy_sum_0nubb->GetXaxis()->FindBin(i_min);i<=histo_energy_sum_0nubb->GetXaxis()->FindBin(i_max);i++) {
-    for (int j=histo_energy_sum_0nubb->GetXaxis()->FindBin(j_min);j<=histo_energy_sum_0nubb->GetXaxis()->FindBin(j_max);j++) {
-
-      efficiency_0nubb += histo_energy_sum_0nubb->Integral(i,j);
-      if (isotope == "82Se") {
-        efficiency_0nubb *= 1./pow(10,7);
-      }
-      else if (isotope == "150Nd") {
-        efficiency_0nubb *= 1./9574121;
-      }
-
-      efficiency_2nubb_2MeV += histo_energy_sum_2nubb_2MeV->Integral(i,j);
-      if (isotope == "82Se") {
-        efficiency_2nubb_2MeV *= 1./pow(10,7);
-        Nbackground_2nubb_2MeV = ((Na*log(2))/mass_mol_82Se)*((efficiency_2nubb_2MeV*exposure)/T_2nubb_82Se);
-      }
-      else if (isotope == "150Nd") {
-        efficiency_2nubb_2MeV *= 1./9574121;
-        Nbackground_2nubb_2MeV = ((Na*log(2))/mass_mol_150Nd)*((efficiency_2nubb_2MeV*exposure)/T_2nubb_150Nd);
-      }
-
-      efficiency_214Bi += histo_energy_sum_214Bi->Integral(i,j);
-      if (isotope == "82Se") {
-        efficiency_2nubb_2MeV *= 1./pow(10,7);
-      }
-      else if (isotope == "150Nd") {
-        efficiency_2nubb_2MeV *= 1./9574121;
-      }
-      Nbackground_214Bi = A_214Bi*efficiency_214Bi*exposure;
-
-      efficiency_208Tl += histo_energy_sum_208Tl->Integral(i,j);
-      if (isotope == "82Se") {
-        efficiency_2nubb_2MeV *= 1./pow(10,7);
-      }
-      else if (isotope == "150Nd") {
-        efficiency_2nubb_2MeV *= 1./9574121;
-      }
-      Nbackground_208Tl = A_208Tl*efficiency_208Tl*exposure;
-
-      Nbackground = Nbackground_2nubb_2MeV+Nbackground_208Tl+Nbackground_214Bi;
-
-      expectedSignalEventLimit = WindowMethodFindExpSigEvts(Nbackground);
-
-      if (isotope == "82Se") {
-        sensitivity = ((Na*log(2))/mass_mol_82Se)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-      }
-      else if (isotope == "150Nd") {
-        sensitivity = ((Na*log(2))/mass_mol_150Nd)*((efficiency_0nubb*exposure)/expectedSignalEventLimit);
-      }
-
-      sensitivity_spectrum->SetBinContent(i+1-histo_energy_sum_0nubb->GetXaxis()->FindBin(i_min),j+2-histo_energy_sum_0nubb->GetXaxis()->FindBin(j_min),sensitivity);
+    double efficiency = 0.;
+    for (int bin_i=emin+1; bin_i<=n_bins; bin_i++){
+      efficiency += histo_energy_sum->GetBinContent(bin_i);
     }
+
+    // if (efficiency < 2.3){
+    //   efficiency = 2.3;
+    // }
+
+    ///eff = Nev sélectionnés / Nev simulés
+    if (isotope == "82Se") {
+      /// Se simulé sur internal source pad bulks
+      if (process == "222Rn") {
+        efficiency *= 1./nb_ev_Rn;
+      }
+      else {
+        efficiency *= 1./1e7;
+      }
+    }
+    if (isotope == "150Nd") {
+      /// Nd simulé sur source pad bulks, donc on doit retirer les év simulés sur les deux feuilles
+      /// externes, ce qui retire qlqs év
+      if (process == "0nubb") {
+        efficiency *= 1./nb_ev_0nu_internal;
+      }
+      else if (process == "2nubb") {
+        efficiency *= 1./nb_ev_2nu_internal;
+      }
+      else if (process == "2nubb_2MeV") {
+        efficiency *= 1./nb_ev_2nu_2MeV_internal;
+      }
+      else if (process == "208Tl") {
+        efficiency *= 1./nb_ev_Tl_internal;
+      }
+      else if (process == "214Bi") {
+        efficiency *= 1./nb_ev_Bi_internal;
+      }
+      else if (process == "222Rn") {
+        efficiency *= 1./nb_ev_Rn;
+      }
+      else {
+        cout  << process << " Unknown process" << endl;
+      }
+    }
+
+    heff->SetBinContent(emin+1, efficiency);
   }
 
-  c_sensitivity_spectrum->cd();
-  TGaxis::SetMaxDigits(2);
-  sensitivity_spectrum->Draw("colz TEXT");
-  sensitivity_spectrum->SetTitle("Expected sensitivity");
-  sensitivity_spectrum->GetXaxis()->SetTitle("Inf ROI (MeV)");
-  sensitivity_spectrum->GetYaxis()->SetTitle("Sup ROI (MeV)");
+  return heff;
 
-  return sensitivity_spectrum;
 }
-
 
 double ErrorStatEfficiency(string process, string isotope, double efficiency){
   double statistic_error = 0;
@@ -1348,19 +827,19 @@ double ErrorStatEfficiency(string process, string isotope, double efficiency){
   }
   if (isotope == "150Nd") {
     if (process == "0nubb") {
-      statistic_error = sqrt(efficiency/9574121);
+      statistic_error = sqrt(efficiency/nb_ev_0nu_internal);
     }
     if (process == "2nubb_2MeV") {
-      statistic_error = sqrt(efficiency/9656794);
+      statistic_error = sqrt(efficiency/nb_ev_2nu_2MeV_internal);
     }
     if (process == "2nubb") {
-      statistic_error = sqrt(efficiency/9656794);
+      statistic_error = sqrt(efficiency/nb_ev_2nu_internal);
     }
     else if (process == "214Bi") {
-      statistic_error = sqrt(efficiency/9778522);
+      statistic_error = sqrt(efficiency/nb_ev_Bi_internal);
     }
     else if (process == "208Tl") {
-      statistic_error = sqrt(efficiency/9773130);
+      statistic_error = sqrt(efficiency/nb_ev_Tl_internal);
     }
   }
   return statistic_error;
